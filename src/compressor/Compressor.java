@@ -13,13 +13,27 @@ import java.util.logging.Logger;
  */
 public class Compressor {
 
-    private static int DEFAULT_BUFF_SIZE = 1024;
+    private static final int DEFAULT_BUFF_SIZE = 1024;
     private static final String USER_DIR = System.getProperty("user.dir");
     private static final String CLOSURE = "closure.jar";
     private static final String YUI = "yui.jar";
     private static Charset charset = Charset.defaultCharset();
-    private static File closure = new File(USER_DIR + File.separator + CLOSURE);
-    private static File yui = new File(USER_DIR + File.separator + YUI);
+    private static final File closure = new File(USER_DIR + File.separator + CLOSURE);
+    private static final File yui = new File(USER_DIR + File.separator + YUI);
+
+    private static class CompressException extends Exception {
+
+        private final String error;
+
+        public CompressException(String error) {
+            this.error = error;
+        }
+
+        public String getError() {
+            return error;
+        }
+
+    }
 
     /**
      * @param args the command line arguments
@@ -100,21 +114,27 @@ public class Compressor {
             String filename = file.getName().toLowerCase();
             if (filename.endsWith(".js") && !filename.endsWith("-min.js")) {
                 echo("compile js:" + file.getAbsolutePath());
-                String minJS = runTool(closure, file, "--charset " + charset.name(), true);
-                if (minJS != null) {
-                    write(file, minJS);
+                try {
+                    String minJS = runTool(closure, file, "--charset " + charset.name(), true);
+                    write(file, minJS == null ? "" : minJS);
                     echo("success compile file " + file.getAbsolutePath());
-                } else {
+                } catch (CompressException ex) {
                     echo("failed compile file " + file.getAbsolutePath());
+                    echo("**************************************************");
+                    echo(ex.getError());
+                    echo("**************************************************");
                 }
             } else if (filename.endsWith(".css") && !filename.endsWith("-min.css")) {
                 echo("compress css:" + file.getAbsolutePath());
-                String minCSS = runTool(yui, file, "--type css --charset " + charset.name(), false);
-                if (minCSS != null) {
-                    write(file, minCSS);
+                try {
+                    String minCSS = runTool(yui, file, "--type css --charset " + charset.name(), false);
+                    write(file, minCSS == null ? "" : minCSS);
                     echo("success compress file " + file.getAbsolutePath());
-                } else {
-                    echo("failed compress file " + file.getAbsolutePath());
+                } catch (CompressException ex) {
+                    echo("failed compile file " + file.getAbsolutePath());
+                    echo("**************************************************");
+                    echo(ex.getError());
+                    echo("**************************************************");
                 }
             } else {
                 echo("skip file:" + file.getAbsolutePath());
@@ -122,10 +142,10 @@ public class Compressor {
         }
     }
 
-    public static String runTool(File tool, File source, String options, boolean unicode) {
+    public static String runTool(File tool, File source, String options, boolean unicode) throws CompressException {
         try {
             if (!tool.exists()) {
-                return null;
+                throw new CompressException("compress tool not exist...");
             }
             String optionStr = options == null ? "" : " " + options.trim();
             String sourceCode = read(source);
@@ -154,16 +174,28 @@ public class Compressor {
             } finally {
                 reader.close();
             }
+            StringBuilder errorSb = new StringBuilder();
+            BufferedReader errorReader = new BufferedReader(new InputStreamReader(pid.getErrorStream(), charset), 1024);
+            try {
+                String line;
+                while ((line = errorReader.readLine()) != null) {
+                    errorSb.append(line);
+                }
+            } finally {
+                errorReader.close();
+            }
             //get exit value and return
             int exit = pid.waitFor();
             if (exit == 0) {
                 return unicode ? toUnicode(sb.toString()) : sb.toString();
             } else {
-                return null;
+                throw new CompressException(errorSb.toString());
             }
+        } catch (CompressException ex) {
+            throw ex;
         } catch (Exception ex) {
             Logger.getLogger(Compressor.class.getName()).log(Level.SEVERE, null, ex);
-            return null;
+            throw new CompressException(ex.getMessage());
         }
     }
 
@@ -184,7 +216,7 @@ public class Compressor {
                 reader.close();
             }
             return sb.toString();
-        } catch (Exception ex) {
+        } catch (IOException ex) {
             Logger.getLogger(Compressor.class.getName()).log(Level.SEVERE, null, ex);
             return null;
         }
@@ -205,7 +237,7 @@ public class Compressor {
                 writer.close();
             }
             return true;
-        } catch (Exception ex) {
+        } catch (IOException ex) {
             Logger.getLogger(Compressor.class.getName()).log(Level.SEVERE, null, ex);
             return false;
         }
